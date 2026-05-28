@@ -1,12 +1,44 @@
 mod config;
 mod error;
-mod models;
-mod routes;
-mod services;
+mod handlers;
 
 use std::sync::Arc;
 
+use axum::Router;
 use tracing_subscriber::EnvFilter;
+
+/// Build the application router, wiring paths to handler functions.
+pub fn routes(config: Arc<config::Config>) -> Router {
+    Router::new()
+        .route(
+            "/health",
+            axum::routing::get(handlers::health::health_check),
+        )
+        .nest(
+            "/api/v1/auth",
+            Router::new()
+                .route("/sign-up", axum::routing::post(handlers::auth::sign_up))
+                .route("/sign-in", axum::routing::post(handlers::auth::sign_in))
+                .route("/sign-out", axum::routing::post(handlers::auth::sign_out))
+                .route("/session", axum::routing::post(handlers::auth::get_session)),
+        )
+        .nest(
+            "/api/v1/notes",
+            Router::new()
+                .route(
+                    "/",
+                    axum::routing::post(handlers::notes::create_note)
+                        .get(handlers::notes::get_my_notes),
+                )
+                .route(
+                    "/{id}",
+                    axum::routing::get(handlers::notes::get_note)
+                        .patch(handlers::notes::update_note)
+                        .delete(handlers::notes::delete_note),
+                ),
+        )
+        .with_state(config)
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -24,7 +56,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("listening on {}", addr);
 
     // Build the router and serve.
-    let app = routes::build_router(config);
+    let app = routes(config);
     axum::serve(listener, app).await?;
 
     Ok(())

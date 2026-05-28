@@ -1,3 +1,5 @@
+pub mod client;
+
 use anyhow::Result;
 use serde::Deserialize;
 
@@ -10,8 +12,6 @@ pub struct Config {
 }
 
 impl Config {
-    /// Load configuration from environment variables.
-    /// Uses `.env` files if present (via dotenvy).
     pub fn from_env() -> Result<Self> {
         dotenvy::dotenv().ok();
 

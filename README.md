@@ -6,6 +6,9 @@ A production-ready Rust API template built with [Axum](https://github.com/tokio-
 
 - **Axum web framework** – fast, ergonomic, and async-first
 - **Neon Auth** – sign-up, sign-in, session management, and sign-out via the Neon Auth API
+- **Neon Data API CRUD** – generic `create`/`get_all`/`get_one`/`update`/`delete` methods on `NeonClient` — works for any table
+- **`NeonClient`** – shared HTTP client that holds the JWT token; automatically extracted from `Authorization: Bearer` via Axum's `FromRequestParts`
+- **Auto-generated types** – `utility-types` derives reduce boilerplate (e.g. `SignInRequest` derived from `SignUpRequest` by omitting `name`)
 - **Health check** – ready-to-extend health endpoint
 - **Structured logging** – `tracing` + `tracing-subscriber` with environment-variable filtering
 - **Unified error handling** – `AppError` enum that maps cleanly to HTTP responses
@@ -15,20 +18,17 @@ A production-ready Rust API template built with [Axum](https://github.com/tokio-
 
 ```
 src/
-├── main.rs           # Entry point — loads config, builds router, starts server
-├── config/mod.rs     # Environment-based configuration (AUTH_URL, PORT, etc.)
-├── error.rs          # AppError type with IntoResponse for Axum
-├── models/
-│   ├── mod.rs
-│   ├── auth.rs       # Auth request/response types (SignUpRequest, Session, etc.)
-│   └── user.rs       # User data type
-├── routes/
-│   ├── mod.rs        # Router builder — nests all route groups
-│   ├── auth.rs       # POST /api/v1/auth/{sign-up,sign-in,sign-out,session}
-│   └── health.rs     # GET /health
-└── services/
+├── main.rs            # pub fn routes() — full router wiring + boot logic
+├── error.rs           # AppError type with IntoResponse for Axum
+├── config/
+│   ├── mod.rs         # Config struct (environment settings)
+│   └── client.rs      # NeonClient (struct + impl + FromRequestParts extractor)
+│                      # + auth types (SignUpRequest, AuthResponse, Session, …)
+└── handlers/
     ├── mod.rs
-    └── auth.rs       # NeonAuthClient — wraps the Neon Auth REST API
+    ├── auth.rs        # Handler functions only (sign_up, sign_in, sign_out, get_session)
+    ├── notes.rs       # Note model + handler functions (create_note, get_my_notes, …)
+    └── health.rs      # health_check
 ```
 
 ## Prerequisites
@@ -62,15 +62,25 @@ HOST=0.0.0.0
 | `PORT`          | Port the server listens on (default `8080`)    | No       |
 | `HOST`          | Host the server binds to (default `0.0.0.0`)   | No       |
 
-> **Note:** You can use different `.env` files per environment (`.env.production`, `.env.test`, etc.).
+### 3. Create the notes table
 
-### 3. Run the server
+Run this SQL in your Neon console's SQL editor:
+
+```sql
+CREATE TABLE notes (
+    id      SERIAL PRIMARY KEY,
+    title   TEXT NOT NULL,
+    content TEXT NOT NULL DEFAULT ''
+);
+```
+
+### 4. Run the server
 
 ```bash
 cargo run
 ```
 
-### 4. Verify it's alive
+### 5. Verify it's alive
 
 ```bash
 curl http://localhost:8080/health
@@ -96,31 +106,71 @@ All auth endpoints are nested under `/api/v1/auth`.
 | POST   | `/api/v1/auth/sign-out`  | Sign out               |
 | POST   | `/api/v1/auth/session`   | Get current session    |
 
-#### Example: Sign up
+### Notes
+
+All notes endpoints require an `Authorization: Bearer <token>` header.
+
+| Method | Path                  | Description              |
+|--------|-----------------------|--------------------------|
+| GET    | `/api/v1/notes`       | List all user notes      |
+| POST   | `/api/v1/notes`       | Create a note            |
+| GET    | `/api/v1/notes/{id}`  | Get a note by ID         |
+| PATCH  | `/api/v1/notes/{id}`  | Update a note            |
+| DELETE | `/api/v1/notes/{id}`  | Delete a note            |
+
+### Example flow
 
 ```bash
+# Sign up
 curl -X POST http://localhost:8080/api/v1/auth/sign-up \
   -H "Content-Type: application/json" \
-  -d '{"email": "user@example.com", "name": "Alice", "password": "s3cret"}'
-```
+  -d '{"email": "alice@example.com", "name": "Alice", "password": "s3cret"}'
 
-#### Example: Sign in
-
-```bash
-curl -X POST http://localhost:8080/api/v1/auth/sign-in \
+# Sign in (save the token)
+TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/sign-in \
   -H "Content-Type: application/json" \
-  -d '{"email": "user@example.com", "password": "s3cret"}'
+  -d '{"email": "alice@example.com", "password": "s3cret"}' | jq -r '.token')
+
+# Create a note
+curl -X POST http://localhost:8080/api/v1/notes \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Hello", "content": "Neon!"}'
+
+# List notes
+curl http://localhost:8080/api/v1/notes \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
-Both sign-up and sign-in return:
+## NeonClient
 
-```json
-{ "token": "<jwt-token>" }
-```
+[`NeonClient`](src/config/client.rs) is the shared HTTP client for both the Neon Auth API and the Neon Data API. After a successful sign-up or sign-in it stores the JWT token, so every subsequent data API call is automatically authenticated.
+
+In handlers, `client: NeonClient` is extracted directly from the request — the `FromRequestParts` implementation pulls the `Authorization: Bearer` header automatically.
+
+### Available methods
+
+| Category | Method                                      | Description                        |
+|----------|---------------------------------------------|------------------------------------|
+| Auth     | `sign_up`                                   | Register a new user                |
+| Auth     | `sign_in`                                   | Sign in an existing user           |
+| Auth     | `get_session`                               | Refresh / validate the session     |
+| Auth     | `sign_out`                                  | Sign out and clear the token       |
+| Data API | `get_all::<T>(resource)`                    | List all records of a resource     |
+| Data API | `get_one::<T>(resource, id)`                | Get a single record by ID          |
+| Data API | `create::<T>(resource, body)`               | Create a record                    |
+| Data API | `update::<T>(resource, id, body)`           | Update a record                    |
+| Data API | `delete(resource, id)`                      | Delete a record                    |
+
+The generic CRUD methods work with any Neon Data API table — just pass the resource name (e.g. `"notes"`, `"users"`) and the return type `T`.
+
+## Adding a new resource
+
+1. **Create the model** — define your struct with `#[derive(Serialize, Deserialize)]` in a new handler file (e.g. `handlers/items.rs`)
+2. **Write handlers** — use `client: NeonClient` with the generic CRUD methods
+3. **Wire routes** — add the paths to `pub fn routes()` in `main.rs`
 
 ## Development
-
-### Useful commands
 
 ```bash
 cargo check       # Check for compilation errors (fast)
@@ -130,13 +180,6 @@ cargo test        # Run tests
 cargo fmt         # Format code
 cargo clippy      # Lint
 ```
-
-### Adding a new route
-
-1. Create a file in `src/routes/` (e.g. `src/routes/items.rs`)
-2. Define your handlers and a `pub fn routes()` that returns an `axum::Router`
-3. Register it in `src/routes/mod.rs` with `.nest("/api/v1/items", items::routes())`
-4. If you need shared state, add it to the `Config` struct and pass it via `with_state`
 
 ## License
 

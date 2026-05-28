@@ -9,6 +9,7 @@ use serde_json::json;
 #[derive(Debug)]
 pub enum AppError {
     /// Invalid request from the client.
+    #[allow(dead_code)]
     BadRequest(String),
     /// Authentication required or failed.
     Unauthorized(String),
