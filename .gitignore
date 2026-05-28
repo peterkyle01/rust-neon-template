@@ -1,0 +1,19 @@
+# Rust
+/target/
+Cargo.lock
+
+# Environment
+.env
+.env.production
+.env.test
+.env.staging
+.env.local
+
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+*.log
