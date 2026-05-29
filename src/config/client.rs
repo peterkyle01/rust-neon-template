@@ -83,22 +83,15 @@ impl NeonClient {
             })
             .send()
             .await?;
+        let jwt = extract_jwt_from_response(&response);
         let status = response.status();
         let text = response.text().await.map_err(reqwest::Error::from)?;
-        tracing::info!("sign_up status={} body={:?}", status, text);
-        // Parse the JSON to find the token
-        let token = serde_json::from_str::<serde_json::Value>(&text)
-            .ok()
-            .and_then(|v| {
-                v.get("access_token")
-                    .or_else(|| v.get("token"))
-                    .or_else(|| v.pointer("/session/access_token"))
-                    .or_else(|| v.pointer("/data/session/access_token"))
-                    .and_then(|t| t.as_str().map(|s| s.to_string()))
-            })
-            .unwrap_or_default();
-        self.jwt_token = Some(token.clone());
-        Ok(token)
+        if !status.is_success() {
+            tracing::warn!("sign_up status={} body={:?}", status, text);
+        }
+        self.jwt_token = jwt;
+        self.get_session().await?;
+        Ok(self.jwt_token.clone().unwrap_or_default())
     }
 
     pub async fn sign_in(
@@ -114,21 +107,15 @@ impl NeonClient {
             .json(&SignInRequest { email, password })
             .send()
             .await?;
+        let jwt = extract_jwt_from_response(&response);
         let status = response.status();
         let text = response.text().await.map_err(reqwest::Error::from)?;
-        tracing::info!("sign_in status={} body={:?}", status, text);
-        let token = serde_json::from_str::<serde_json::Value>(&text)
-            .ok()
-            .and_then(|v| {
-                v.get("access_token")
-                    .or_else(|| v.get("token"))
-                    .or_else(|| v.pointer("/session/access_token"))
-                    .or_else(|| v.pointer("/data/session/access_token"))
-                    .and_then(|t| t.as_str().map(|s| s.to_string()))
-            })
-            .unwrap_or_default();
-        self.jwt_token = Some(token.clone());
-        Ok(token)
+        if !status.is_success() {
+            tracing::warn!("sign_in status={} body={:?}", status, text);
+        }
+        self.jwt_token = jwt;
+        self.get_session().await?;
+        Ok(self.jwt_token.clone().unwrap_or_default())
     }
 
     pub async fn get_session(&mut self) -> Result<Option<Session>, reqwest::Error> {
@@ -139,12 +126,26 @@ impl NeonClient {
         let response = self
             .http
             .get(format!("{}/get-session", self.auth_url))
-            .header("Authorization", format!("Bearer {}", token))
+            .header(
+                "Cookie",
+                format!("__Secure-neon-auth.session_token={}", token),
+            )
             .send()
             .await?;
+        // Extract the JWT from the set-auth-jwt response header
+        let jwt = response
+            .headers()
+            .get("set-auth-jwt")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
         let status = response.status();
         let text = response.text().await.map_err(reqwest::Error::from)?;
-        tracing::info!("get_session status={} body={:?}", status, text);
+        if !status.is_success() {
+            tracing::warn!("get_session status={} body={:?}", status, text);
+        }
+        if let Some(jwt) = jwt {
+            self.jwt_token = Some(jwt);
+        }
         let session = serde_json::from_str::<serde_json::Value>(&text)
             .ok()
             .and_then(|v| {
@@ -153,9 +154,6 @@ impl NeonClient {
                     .cloned()
             })
             .and_then(|s| serde_json::from_value::<Session>(s).ok());
-        if let Some(ref s) = session {
-            self.jwt_token = Some(s.access_token.clone());
-        }
         Ok(session)
     }
 
@@ -164,15 +162,11 @@ impl NeonClient {
             Some(t) => t.clone(),
             None => return Ok(()),
         };
-        let response = self
-            .http
+        self.http
             .post(format!("{}/sign-out", self.auth_url))
             .header("Authorization", format!("Bearer {}", token))
             .send()
             .await?;
-        let status = response.status();
-        let text = response.text().await.map_err(reqwest::Error::from)?;
-        tracing::info!("sign_out status={} body={:?}", status, text);
         self.jwt_token = None;
         Ok(())
     }
@@ -201,14 +195,18 @@ impl NeonClient {
         resource: &str,
     ) -> Result<Vec<T>, anyhow::Error> {
         let url = format!("{}/{}", self.data_api_url, resource);
-        Ok(self
+        let response = self
             .http
             .get(&url)
             .header("Authorization", format!("Bearer {}", self.bearer_token()?))
             .send()
-            .await?
-            .json()
-            .await?)
+            .await?;
+        let status = response.status();
+        let text = response.text().await?;
+        if !status.is_success() {
+            tracing::warn!("get_all({}) status={} body={:?}", resource, status, text);
+        }
+        Ok(serde_json::from_str(&text)?)
     }
 
     pub async fn get_one<T: serde::de::DeserializeOwned>(
@@ -217,14 +215,18 @@ impl NeonClient {
         id: i32,
     ) -> Result<Option<T>, anyhow::Error> {
         let url = format!("{}/{}?id=eq.{}", self.data_api_url, resource, id);
-        let mut records: Vec<T> = self
+        let response = self
             .http
             .get(&url)
             .header("Authorization", format!("Bearer {}", self.bearer_token()?))
             .send()
-            .await?
-            .json()
             .await?;
+        let status = response.status();
+        let text = response.text().await?;
+        if !status.is_success() {
+            tracing::warn!("get_one({}) status={} body={:?}", resource, status, text);
+        }
+        let mut records: Vec<T> = serde_json::from_str(&text)?;
         Ok(records.pop())
     }
 
@@ -270,6 +272,23 @@ fn origin_from_url(url: &str) -> String {
     } else {
         String::new()
     }
+}
+
+/// Extract the full JWT from the `Set-Cookie` header of a sign-in/up response.
+///
+/// The cookie `__Secure-neon-auth.session_token` contains the real JWT
+/// (`session_id.signature`), while the body `token` is just the session ID
+/// without the signature and is not accepted by the Data API.
+fn extract_jwt_from_response(response: &reqwest::Response) -> Option<String> {
+    let cookie = response.headers().get("Set-Cookie")?.to_str().ok()?;
+    // Find the cookie value for __Secure-neon-auth.session_token
+    let value = cookie
+        .split(';')
+        .next()?
+        .strip_prefix("__Secure-neon-auth.session_token=")?;
+    // URL-decode the value (the signature part may be URL-encoded)
+    let decoded = urlencoding::decode(value).ok()?;
+    Some(decoded.into_owned())
 }
 
 // ── Axum extractor ──
