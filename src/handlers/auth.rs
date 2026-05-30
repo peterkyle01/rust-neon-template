@@ -30,9 +30,3 @@ pub async fn sign_out(State(config): State<Arc<Config>>) -> Result<Json<Value>, 
     client.sign_out().await?;
     Ok(Json(json!({ "message": "signed out" })))
 }
-
-pub async fn get_session(State(config): State<Arc<Config>>) -> Result<Json<Value>, AppError> {
-    let mut client = NeonClient::new(&config);
-    let session = client.get_session().await?;
-    Ok(Json(json!({ "session": session })))
-}

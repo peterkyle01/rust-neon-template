@@ -9,25 +9,47 @@ A production-ready Rust API template built with [Axum](https://github.com/tokio-
 - **Neon Data API CRUD** – generic `create`/`get_all`/`get_one`/`update`/`delete` methods on `NeonClient` — works for any table
 - **`NeonClient`** – shared HTTP client that holds the JWT token; automatically extracted from `Authorization: Bearer` via Axum's `FromRequestParts`
 - **Auto-generated types** – `utility-types` derives reduce boilerplate (e.g. `SignInRequest` derived from `SignUpRequest` by omitting `name`)
+- **Request tracing** – every incoming HTTP request is logged with method, path, status, and duration
 - **Health check** – ready-to-extend health endpoint
 - **Structured logging** – `tracing` + `tracing-subscriber` with environment-variable filtering
 - **Unified error handling** – `AppError` enum that maps cleanly to HTTP responses
 - **No system OpenSSL** – uses `rustls` for TLS
 
+## How it works
+
+```
+Client                    Axum Server                      Neon Auth                  Neon Data API
+  │                          │                                │                           │
+  ├─ POST /api/v1/auth/sign-in                                │                           │
+  │                          ├─ POST /sign-in/email ─────────►│                           │
+  │                          │◄── session token + cookie ─────┤                           │
+  │                          ├─ GET /get-session (cookie) ───►│                           │
+  │                          │◄── set-auth-jwt: <JWT> ───────┤                           │
+  │◄─ { "token": "<JWT>" }───┤                                │                           │
+  │                          │                                │                           │
+  ├─ GET /api/v1/notes (Bearer JWT)                           │                           │
+  │                          ├─ GET /notes (Bearer JWT) ──────┼───────────────►───────────┤
+  │◄─ [{ "id": 1, ... }] ────┤◄──────────────────────────────┼───────────[{ ... }]───────┤
+```
+
+1. **Sign in** – the client calls the Better Auth REST API, which returns a session cookie
+2. **Get JWT** – `NeonClient` calls `/get-session` with the cookie, then extracts the real JWT from the `set-auth-jwt` response header
+3. **Data API** – the JWT is used as `Authorization: Bearer` for all subsequent Data API queries
+
 ## Project Structure
 
 ```
 src/
-├── main.rs            # pub fn routes() — full router wiring + boot logic
+├── main.rs            # pub fn routes() — full router wiring + TraceLayer + boot logic
 ├── error.rs           # AppError type with IntoResponse for Axum
 ├── config/
 │   ├── mod.rs         # Config struct (environment settings)
 │   └── client.rs      # NeonClient (struct + impl + FromRequestParts extractor)
-│                      # + auth types (SignUpRequest, AuthResponse, Session, …)
+│                      # + auth types (SignUpRequest, SignInRequest, Session)
 └── handlers/
     ├── mod.rs
-    ├── auth.rs        # Handler functions only (sign_up, sign_in, sign_out, get_session)
-    ├── notes.rs       # Note model + handler functions (create_note, get_my_notes, …)
+    ├── auth.rs        # Handler functions (sign_up, sign_in, sign_out)
+    ├── notes.rs       # Note model + handler functions (create, list, get, update, delete)
     └── health.rs      # health_check
 ```
 
@@ -46,19 +68,23 @@ git clone <your-repo-url> && cd rust-neon-template
 
 ### 2. Set environment variables
 
-Create a `.env` file in the project root:
+Copy the example env file and fill in your Neon project URLs:
+
+```bash
+cp .env.example .env
+```
 
 ```env
-AUTH_URL=https://<your-neon-project>.us-east-1.aws.neon.tech
-DATA_API_URL=https://<your-neon-project>.us-east-1.aws.neon.tech/sql
+AUTH_URL=https://<your-project>.neonauth.<region>.aws.neon.tech/neondb/auth
+DATA_API_URL=https://<your-project>.apirest.<region>.aws.neon.tech/neondb/rest/v1
 PORT=8080
 HOST=0.0.0.0
 ```
 
 | Variable        | Description                                    | Required |
 |-----------------|------------------------------------------------|----------|
-| `AUTH_URL`      | Base URL of your Neon Auth API                 | Yes      |
-| `DATA_API_URL`  | Base URL of your Neon Data API                 | Yes      |
+| `AUTH_URL`      | Your Neon Auth URL (from Console → Auth)       | Yes      |
+| `DATA_API_URL`  | Your Data API URL (from Console → Data API)    | Yes      |
 | `PORT`          | Port the server listens on (default `8080`)    | No       |
 | `HOST`          | Host the server binds to (default `0.0.0.0`)   | No       |
 
@@ -74,10 +100,20 @@ CREATE TABLE notes (
 );
 ```
 
+If the Data API was enabled before creating the table, refresh its schema cache from the Data API page in the Console.
+
 ### 4. Run the server
 
 ```bash
 cargo run
+```
+
+Every incoming request is now logged to the terminal:
+
+```
+2026-05-29T07:31:19.785Z  INFO request: POST /api/v1/auth/sign-in
+2026-05-29T07:31:19.965Z  INFO request: POST /api/v1/auth/sign-in 200 OK
+2026-05-29T07:31:20.930Z  INFO request: GET /api/v1/notes 200 OK 3ms
 ```
 
 ### 5. Verify it's alive
@@ -104,7 +140,6 @@ All auth endpoints are nested under `/api/v1/auth`.
 | POST   | `/api/v1/auth/sign-up`   | Register a new user    |
 | POST   | `/api/v1/auth/sign-in`   | Sign in an user        |
 | POST   | `/api/v1/auth/sign-out`  | Sign out               |
-| POST   | `/api/v1/auth/session`   | Get current session    |
 
 ### Notes
 
@@ -114,11 +149,11 @@ All notes endpoints require an `Authorization: Bearer <token>` header.
 |--------|-----------------------|--------------------------|
 | GET    | `/api/v1/notes`       | List all user notes      |
 | POST   | `/api/v1/notes`       | Create a note            |
-| GET    | `/api/v1/notes/{id}`  | Get a note by ID         |
-| PATCH  | `/api/v1/notes/{id}`  | Update a note            |
-| DELETE | `/api/v1/notes/{id}`  | Delete a note            |
+| GET    | `/api/v1/notes/:id`   | Get a note by ID         |
+| PATCH  | `/api/v1/notes/:id`   | Update a note            |
+| DELETE | `/api/v1/notes/:id`   | Delete a note            |
 
-### Example flow
+### Full example
 
 ```bash
 # Sign up
@@ -126,7 +161,7 @@ curl -X POST http://localhost:8080/api/v1/auth/sign-up \
   -H "Content-Type: application/json" \
   -d '{"email": "alice@example.com", "name": "Alice", "password": "s3cret"}'
 
-# Sign in (save the token)
+# Sign in and save the JWT
 TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/sign-in \
   -H "Content-Type: application/json" \
   -d '{"email": "alice@example.com", "password": "s3cret"}' | jq -r '.token')
@@ -140,11 +175,29 @@ curl -X POST http://localhost:8080/api/v1/notes \
 # List notes
 curl http://localhost:8080/api/v1/notes \
   -H "Authorization: Bearer $TOKEN"
+
+# Get a single note
+curl http://localhost:8080/api/v1/notes/1 \
+  -H "Authorization: Bearer $TOKEN"
+
+# Update a note
+curl -X PATCH http://localhost:8080/api/v1/notes/1 \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Updated", "content": "Edited!"}'
+
+# Delete a note
+curl -X DELETE http://localhost:8080/api/v1/notes/1 \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 ## NeonClient
 
-[`NeonClient`](src/config/client.rs) is the shared HTTP client for both the Neon Auth API and the Neon Data API. After a successful sign-up or sign-in it stores the JWT token, so every subsequent data API call is automatically authenticated.
+[`NeonClient`](src/config/client.rs) is the shared HTTP client for both the Neon Auth API and the Neon Data API. It handles the full token lifecycle:
+
+1. **Sign-in / Sign-up** – calls the Better Auth REST API, extracts the session cookie
+2. **JWT exchange** – calls `/get-session` with the cookie, extracts the JWT from the `set-auth-jwt` response header
+3. **Data API calls** – uses the JWT as `Authorization: Bearer` for all CRUD operations
 
 In handlers, `client: NeonClient` is extracted directly from the request — the `FromRequestParts` implementation pulls the `Authorization: Bearer` header automatically.
 

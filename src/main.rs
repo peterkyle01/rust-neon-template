@@ -5,6 +5,7 @@ mod handlers;
 use std::sync::Arc;
 
 use axum::Router;
+use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 
 /// Build the application router, wiring paths to handler functions.
@@ -19,8 +20,7 @@ pub fn routes(config: Arc<config::Config>) -> Router {
             Router::new()
                 .route("/sign-up", axum::routing::post(handlers::auth::sign_up))
                 .route("/sign-in", axum::routing::post(handlers::auth::sign_in))
-                .route("/sign-out", axum::routing::post(handlers::auth::sign_out))
-                .route("/session", axum::routing::post(handlers::auth::get_session)),
+                .route("/sign-out", axum::routing::post(handlers::auth::sign_out)),
         )
         .nest(
             "/api/v1/notes",
@@ -31,12 +31,13 @@ pub fn routes(config: Arc<config::Config>) -> Router {
                         .get(handlers::notes::get_my_notes),
                 )
                 .route(
-                    "/{id}",
+                    "/:id",
                     axum::routing::get(handlers::notes::get_note)
                         .patch(handlers::notes::update_note)
                         .delete(handlers::notes::delete_note),
                 ),
         )
+        .layer(TraceLayer::new_for_http())
         .with_state(config)
 }
 

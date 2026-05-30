@@ -183,6 +183,7 @@ impl NeonClient {
             .http
             .post(&url)
             .header("Authorization", format!("Bearer {}", self.bearer_token()?))
+            .header("Prefer", "return=representation")
             .json(&body)
             .send()
             .await?
@@ -241,6 +242,7 @@ impl NeonClient {
             .http
             .patch(&url)
             .header("Authorization", format!("Bearer {}", self.bearer_token()?))
+            .header("Prefer", "return=representation")
             .json(&body)
             .send()
             .await?
