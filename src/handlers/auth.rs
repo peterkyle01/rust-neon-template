@@ -36,8 +36,35 @@ pub async fn sign_out(
     Ok(response::ok(serde_json::json!({ "message": "signed out" })))
 }
 
-/// Map an anyhow error from the auth client to an `AppError` with the
-/// right status code, preserving the API error message.
+/// Return the currently authenticated user's info from the JWT payload.
+pub async fn get_me(client: NeonClient) -> Result<impl axum::response::IntoResponse, AppError> {
+    let token = client
+        .token()
+        .ok_or_else(|| AppError::Unauthorized("not authenticated".into()))?;
+    let user = decode_jwt_payload(token)
+        .map_err(|e| AppError::Unauthorized(format!("invalid token: {}", e)))?;
+    Ok(response::ok(user))
+}
+
+/// Decode the payload segment of a JWT without verifying the signature.
+/// We only extract what the auth service already signed — trust is inherited
+/// from the `set-auth-jwt` response header.
+fn decode_jwt_payload(token: &str) -> Result<serde_json::Value, String> {
+    use base64::Engine;
+
+    let payload_b64 = token
+        .split('.')
+        .nth(1)
+        .ok_or_else(|| "missing payload segment".to_string())?;
+
+    let engine = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    let bytes = engine
+        .decode(payload_b64)
+        .map_err(|e| format!("base64 decode failed: {}", e))?;
+
+    serde_json::from_slice(&bytes).map_err(|e| format!("json decode failed: {}", e))
+}
+
 fn map_auth_error(err: anyhow::Error) -> AppError {
     let msg = err.to_string();
     let status_code = msg
@@ -46,8 +73,6 @@ fn map_auth_error(err: anyhow::Error) -> AppError {
         .and_then(|s| s.split(' ').next())
         .and_then(|s| s.parse::<u16>().ok());
     let body = msg.split(" - ").nth(1).unwrap_or(&msg).to_string();
-
-    // Override API status code based on the error message content.
     let is_user_exists = body.contains("already exists");
 
     match (status_code, is_user_exists) {

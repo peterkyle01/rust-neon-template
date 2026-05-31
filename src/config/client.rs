@@ -58,7 +58,6 @@ impl NeonClient {
         }
     }
 
-    #[allow(dead_code)]
     pub fn token(&self) -> Option<&str> {
         self.jwt_token.as_deref()
     }

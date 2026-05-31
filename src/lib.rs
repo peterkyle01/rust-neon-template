@@ -19,7 +19,8 @@ pub fn routes(config: Arc<config::Config>) -> Router {
             Router::new()
                 .route("/sign-up", axum::routing::post(handlers::auth::sign_up))
                 .route("/sign-in", axum::routing::post(handlers::auth::sign_in))
-                .route("/sign-out", axum::routing::post(handlers::auth::sign_out)),
+                .route("/sign-out", axum::routing::post(handlers::auth::sign_out))
+                .route("/me", axum::routing::get(handlers::auth::get_me)),
         )
         .nest(
             "/api/v1/notes",

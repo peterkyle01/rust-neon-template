@@ -241,4 +241,26 @@ async fn test_notes_crud_flow() {
     .await;
     assert_eq!(status, 200);
     assert_eq!(body["data"]["message"], "signed out");
+
+    // ── Get /me with valid token should return user info ──
+    // Get a fresh token for the me test
+    let token2 = get_token(&base, "kylepeterkoine4@gmail.com", "super_secret").await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(&format!("{}/api/v1/auth/me", base))
+        .header("Authorization", format!("Bearer {}", token2))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 200);
+    let me: Value = resp.json().await.unwrap();
+    assert_eq!(me["data"]["email"], "kylepeterkoine4@gmail.com");
+    assert!(me["data"]["sub"].is_string());
+    assert!(me["data"]["name"].is_string());
+    assert_eq!(me["data"]["role"], "authenticated");
+
+    // ── Get /me without token should return 401 ──
+    let (status, body) = get(&format!("{}/api/v1/auth/me", base)).await;
+    assert_eq!(status, 401);
+    assert_eq!(body["error"]["code"], "UNAUTHORIZED");
 }
