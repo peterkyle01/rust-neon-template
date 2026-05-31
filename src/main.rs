@@ -5,7 +5,7 @@ mod response;
 use std::sync::Arc;
 
 use axum::Router;
-use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
+use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 use tracing_subscriber::EnvFilter;
 
 /// Build the application router, wiring paths to handler functions.
@@ -44,9 +44,29 @@ pub fn routes(config: Arc<config::Config>) -> Router {
                         .include_headers(false)
                         .level(tracing::Level::INFO),
                 )
-                .on_response(DefaultOnResponse::new().level(tracing::Level::INFO)),
+                .on_response(LogOnResponse),
         )
         .with_state(config)
+}
+
+#[derive(Clone)]
+struct LogOnResponse;
+
+impl<B> tower_http::trace::OnResponse<B> for LogOnResponse {
+    fn on_response(
+        self,
+        response: &axum::http::Response<B>,
+        latency: std::time::Duration,
+        _span: &tracing::Span,
+    ) {
+        let status = response.status();
+        let ms = latency.as_millis();
+        match status.as_u16() {
+            200..=399 => tracing::info!(status = status.as_u16(), latency_ms = ms, "ok"),
+            400..=499 => tracing::warn!(status = status.as_u16(), latency_ms = ms, "client error"),
+            _ => tracing::error!(status = status.as_u16(), latency_ms = ms, "server error"),
+        }
+    }
 }
 
 #[tokio::main]
