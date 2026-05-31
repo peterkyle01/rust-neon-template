@@ -70,7 +70,7 @@ impl NeonClient {
         email: String,
         name: String,
         password: String,
-    ) -> Result<String, reqwest::Error> {
+    ) -> Result<String, anyhow::Error> {
         let origin = origin_from_url(&self.auth_url);
         let response = self
             .http
@@ -85,9 +85,16 @@ impl NeonClient {
             .await?;
         let jwt = extract_jwt_from_response(&response);
         let status = response.status();
-        let text = response.text().await.map_err(reqwest::Error::from)?;
+        let text = response.text().await?;
         if !status.is_success() {
-            tracing::warn!("sign_up status={} body={:?}", status, text);
+            let msg = serde_json::from_str::<serde_json::Value>(&text)
+                .ok()
+                .and_then(|v| {
+                    v.get("message")
+                        .and_then(|m| m.as_str().map(|s| s.to_string()))
+                })
+                .unwrap_or_else(|| "request failed".to_string());
+            return Err(anyhow::anyhow!("sign_up: {} - {}", status.as_u16(), msg));
         }
         self.jwt_token = jwt;
         self.get_session().await?;
@@ -98,7 +105,7 @@ impl NeonClient {
         &mut self,
         email: String,
         password: String,
-    ) -> Result<String, reqwest::Error> {
+    ) -> Result<String, anyhow::Error> {
         let origin = origin_from_url(&self.auth_url);
         let response = self
             .http
@@ -109,9 +116,16 @@ impl NeonClient {
             .await?;
         let jwt = extract_jwt_from_response(&response);
         let status = response.status();
-        let text = response.text().await.map_err(reqwest::Error::from)?;
+        let text = response.text().await?;
         if !status.is_success() {
-            tracing::warn!("sign_in status={} body={:?}", status, text);
+            let msg = serde_json::from_str::<serde_json::Value>(&text)
+                .ok()
+                .and_then(|v| {
+                    v.get("message")
+                        .and_then(|m| m.as_str().map(|s| s.to_string()))
+                })
+                .unwrap_or_else(|| "request failed".to_string());
+            return Err(anyhow::anyhow!("sign_in: {} - {}", status.as_u16(), msg));
         }
         self.jwt_token = jwt;
         self.get_session().await?;
