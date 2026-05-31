@@ -42,7 +42,10 @@ pub async fn get_note(
     Path(id): Path<i32>,
 ) -> Result<impl axum::response::IntoResponse, AppError> {
     let note: Option<Note> = client.get_one("notes", id).await?;
-    Ok(response::ok(json!(note)))
+    match note {
+        Some(n) => Ok(response::ok(json!(n))),
+        None => Err(AppError::NotFound(format!("note {} not found", id))),
+    }
 }
 
 pub async fn update_note(
@@ -51,6 +54,9 @@ pub async fn update_note(
     Json(body): Json<RequestNote>,
 ) -> Result<impl axum::response::IntoResponse, AppError> {
     let notes: Vec<Note> = client.update("notes", id, &body).await?;
+    if notes.is_empty() {
+        return Err(AppError::NotFound(format!("note {} not found", id)));
+    }
     Ok(response::ok(json!(notes)))
 }
 
@@ -58,6 +64,9 @@ pub async fn delete_note(
     client: NeonClient,
     Path(id): Path<i32>,
 ) -> Result<impl axum::response::IntoResponse, AppError> {
-    client.delete("notes", id).await?;
+    let deleted = client.delete("notes", id).await?;
+    if !deleted {
+        return Err(AppError::NotFound(format!("note {} not found", id)));
+    }
     Ok(response::ok(json!({ "message": "deleted" })))
 }

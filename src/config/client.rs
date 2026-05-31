@@ -250,14 +250,18 @@ impl NeonClient {
             .await?)
     }
 
-    pub async fn delete(&self, resource: &str, id: i32) -> Result<(), anyhow::Error> {
+    pub async fn delete(&self, resource: &str, id: i32) -> Result<bool, anyhow::Error> {
         let url = format!("{}/{}?id=eq.{}", self.data_api_url, resource, id);
-        self.http
+        let response = self
+            .http
             .delete(&url)
             .header("Authorization", format!("Bearer {}", self.bearer_token()?))
+            .header("Prefer", "return=representation")
             .send()
             .await?;
-        Ok(())
+        let text = response.text().await?;
+        let rows: Vec<serde_json::Value> = serde_json::from_str(&text).unwrap_or_default();
+        Ok(!rows.is_empty())
     }
 
     fn bearer_token(&self) -> Result<&str, anyhow::Error> {
