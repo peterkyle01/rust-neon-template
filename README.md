@@ -1,6 +1,11 @@
 # Rust Neon Template
 
-A production-ready Rust API template built with [Axum](https://github.com/tokio-rs/axum) and [Neon](https://neon.tech) (serverless Postgres with built-in Auth and Data APIs).
+A Rust API starter template built with [Axum](https://github.com/tokio-rs/axum) and [Neon](https://neon.tech) (serverless Postgres with built-in Auth and Data APIs).
+
+> **⚠️ Not production-ready out of the box.** This starter template is intended
+> to accelerate development. Before deploying to production, review authentication,
+> authorization, rate limiting, input validation, error handling, secrets management,
+> and security hardening for your specific use case.
 
 ## Features
 
