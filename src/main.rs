@@ -31,7 +31,7 @@ pub fn routes(config: Arc<config::Config>) -> Router {
                         .get(handlers::notes::get_my_notes),
                 )
                 .route(
-                    "/:id",
+                    "/{id}",
                     axum::routing::get(handlers::notes::get_note)
                         .patch(handlers::notes::update_note)
                         .delete(handlers::notes::delete_note),

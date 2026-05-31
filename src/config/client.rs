@@ -1,8 +1,8 @@
+use std::future::Future;
 use std::sync::Arc;
 
 use anyhow::Result;
 use axum::{
-    async_trait,
     extract::{FromRef, FromRequestParts},
     http::request::Parts,
 };
@@ -295,7 +295,6 @@ fn extract_jwt_from_response(response: &reqwest::Response) -> Option<String> {
 
 // ── Axum extractor ──
 
-#[async_trait]
 impl<S> FromRequestParts<S> for NeonClient
 where
     S: Send + Sync,
@@ -303,17 +302,19 @@ where
 {
     type Rejection = AppError;
 
-    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+    fn from_request_parts(
+        parts: &mut Parts,
+        state: &S,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         let config = Arc::from_ref(state);
-        let token = parts
+        let result = parts
             .headers
             .get("Authorization")
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.strip_prefix("Bearer "))
             .map(|s| s.to_string())
-            .ok_or_else(|| {
-                AppError::Unauthorized("missing or invalid Authorization header".into())
-            })?;
-        Ok(NeonClient::with_token(&config, token))
+            .ok_or_else(|| AppError::Unauthorized("missing or invalid Authorization header".into()))
+            .map(|token| NeonClient::with_token(&config, token));
+        async move { result }
     }
 }
