@@ -5,7 +5,7 @@ mod response;
 use std::sync::Arc;
 
 use axum::Router;
-use tower_http::trace::TraceLayer;
+use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
 use tracing_subscriber::EnvFilter;
 
 /// Build the application router, wiring paths to handler functions.
@@ -37,18 +37,27 @@ pub fn routes(config: Arc<config::Config>) -> Router {
                         .delete(handlers::notes::delete_note),
                 ),
         )
-        .layer(TraceLayer::new_for_http())
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(
+                    DefaultMakeSpan::new()
+                        .include_headers(false)
+                        .level(tracing::Level::INFO),
+                )
+                .on_response(DefaultOnResponse::new().level(tracing::Level::INFO)),
+        )
         .with_state(config)
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialise structured logging.
+    // Configure logging — show all info-level events in a compact format.
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
+        .with_target(false)
+        .without_time()
         .init();
 
-    // Load configuration from environment variables.
     let config = Arc::new(config::Config::from_env()?);
 
     let addr = format!("{}:{}", config.host, config.port);
@@ -56,7 +65,6 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("listening on {}", addr);
 
-    // Build the router and serve.
     let app = routes(config);
     axum::serve(listener, app).await?;
 
