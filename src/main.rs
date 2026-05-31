@@ -1,6 +1,6 @@
 mod config;
-mod error;
 mod handlers;
+mod response;
 
 use std::sync::Arc;
 

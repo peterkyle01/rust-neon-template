@@ -10,7 +10,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
 use super::Config;
-use crate::error::AppError;
+use crate::response::AppError;
 use utility_types::Omit;
 
 // ── Auth request / response types ──

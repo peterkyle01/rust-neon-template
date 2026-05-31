@@ -1,9 +1,9 @@
 use axum::{Json, extract::Path};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::json;
 
 use crate::config::client::NeonClient;
-use crate::error::AppError;
+use crate::response::{self, AppError};
 use utility_types::Omit;
 
 // ── Note model ──
@@ -21,35 +21,43 @@ pub struct Note {
 pub async fn create_note(
     client: NeonClient,
     Json(body): Json<RequestNote>,
-) -> Result<Json<Value>, AppError> {
+) -> Result<impl axum::response::IntoResponse, AppError> {
     let notes: Vec<Note> = client.create("notes", &body).await?;
     let note = notes
         .into_iter()
         .next()
         .ok_or_else(|| AppError::NotFound("no note returned".into()))?;
-    Ok(Json(json!(note)))
+    Ok(response::created(json!(note)))
 }
 
-pub async fn get_my_notes(client: NeonClient) -> Result<Json<Value>, AppError> {
+pub async fn get_my_notes(
+    client: NeonClient,
+) -> Result<impl axum::response::IntoResponse, AppError> {
     let notes: Vec<Note> = client.get_all("notes").await?;
-    Ok(Json(json!(notes)))
+    Ok(response::ok(json!(notes)))
 }
 
-pub async fn get_note(client: NeonClient, Path(id): Path<i32>) -> Result<Json<Value>, AppError> {
+pub async fn get_note(
+    client: NeonClient,
+    Path(id): Path<i32>,
+) -> Result<impl axum::response::IntoResponse, AppError> {
     let note: Option<Note> = client.get_one("notes", id).await?;
-    Ok(Json(json!(note)))
+    Ok(response::ok(json!(note)))
 }
 
 pub async fn update_note(
     client: NeonClient,
     Path(id): Path<i32>,
     Json(body): Json<RequestNote>,
-) -> Result<Json<Value>, AppError> {
+) -> Result<impl axum::response::IntoResponse, AppError> {
     let notes: Vec<Note> = client.update("notes", id, &body).await?;
-    Ok(Json(json!(notes)))
+    Ok(response::ok(json!(notes)))
 }
 
-pub async fn delete_note(client: NeonClient, Path(id): Path<i32>) -> Result<Json<Value>, AppError> {
+pub async fn delete_note(
+    client: NeonClient,
+    Path(id): Path<i32>,
+) -> Result<impl axum::response::IntoResponse, AppError> {
     client.delete("notes", id).await?;
-    Ok(Json(json!({ "message": "deleted" })))
+    Ok(response::ok(json!({ "message": "deleted" })))
 }
